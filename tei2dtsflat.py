@@ -148,7 +148,7 @@ def parse_tei(doc, args):
 ##
 def main():
     argp = argparse.ArgumentParser(description='Create DTSflat file structure from TEI XML.')
-    argp.add_argument('--version', action='version', version='%(prog)s 0.0')
+    argp.add_argument('--version', action='version', version='%(prog)s 0.1')
     argp.add_argument('-l', '--log', dest='loglevel', choices=['INFO', 'DEBUG', 'ERROR'], default='DEBUG', 
                       help='Log level.')
     argp.add_argument('inputfile',
