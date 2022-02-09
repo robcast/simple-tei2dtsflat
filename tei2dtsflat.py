@@ -25,7 +25,7 @@ def write_xml_document(doc, args):
     """
     dir = Path(args.basedir, args.docid)
     dir.mkdir(parents=True, exist_ok=True)
-    outfile = Path(dir, 'tei-doc.xml')
+    outfile = Path(dir, 'tei-full.xml')
     logging.debug(f"writing XML document {outfile}")
     with outfile.open(mode='wb') as f:
         # write as new ElementTree
@@ -54,14 +54,21 @@ def write_xml_fragment(doc, frag_id, args):
         tree.write(f, encoding='utf-8', xml_declaration=True)
         
 
-def write_json_document(doc, level, args):
+def write_json_document(doc, ref, level, args):
     """
     Write document doc as JSON file in basedir/docid.
     """
-    if level == 0:
+    if level == 0 and ref is None:
         dir = Path(args.basedir, args.docid)
-    else:
+    elif level == 0:
+        # directories for ref only
+        dir = Path(args.basedir, args.docid, ref)
+    elif ref is None:
+        # directories for level only
         dir = Path(args.basedir, args.docid, str(level))
+    else:
+        # directories for ref and level
+        dir = Path(args.basedir, args.docid, ref, str(level))
         
     dir.mkdir(parents=True, exist_ok=True)
     outfile = Path(dir, 'dts-nav.json')
@@ -165,84 +172,194 @@ def parse_tei_doc(doc, args):
     return infos
 
 
-def get_div_maxlevel(infos, maxlevel):
+def get_maxlevel(divs, maxlevel):
     """
     Returns the maximum div level.
     """
-    for info in infos:
+    for info in divs:
         if info['level'] > maxlevel:
             maxlevel = info['level']
             
         if info['subdivs']:
-            maxlevel = get_div_maxlevel(info['subdivs'], maxlevel)
+            maxlevel = get_maxlevel(info['subdivs'], maxlevel)
             
     return maxlevel
 
 
-def get_div_ids(infos, level):
+def get_div_by_ref(divs, ref):
     """
-    Returns a list of all div ids at level.
+    Returns the div with the id ref.
     """
+    refdiv = None
+    parent_id = None
+    for div in divs:
+        if div['id'] == ref:
+            refdiv = div
+            break
+
+        if div['subdivs']:
+            subdiv, _ = get_div_by_ref(div['subdivs'], ref)
+            if subdiv:
+                refdiv = subdiv
+                parent_id = div['id']
+                break
+
+    return refdiv, parent_id
+
+
+def get_div_ids_by_level(divs, level):
+    """
+    Returns a list of all div ids with level.
+    """
+    if not isinstance(divs, list):
+        divs = [divs]
+    
     ids = []
-    for info in infos:
-        if info['level'] == level:
-            ids.append(info['id'])
+    for div in divs:
+        if div['level'] == level:
+            ids.append(div['id'])
+            # no need to check subdivs
+            continue
+        
+        elif div['level'] > level:
+            # no need to check at this level
+            return ids
             
-        if info['subdivs']:
-            subids = get_div_ids(info['subdivs'], level)
+        if div['subdivs']:
+            subids = get_div_ids_by_level(div['subdivs'], level)
             ids.extend(subids)
             
     return ids
 
 
-def write_nav_level(infos, level, args):
+def get_div_ids_upto_level(divs, level):
     """
-    Write DTS navigation structure JSON file for level.
+    Returns a list of all div ids up to level.
     """
+    if not isinstance(divs, list):
+        divs = [divs]
+        
+    ids = []
+    for div in divs:
+        if div['level'] < level:
+            ids.append(div['id'])
+            
+        elif div['level'] == level:
+            ids.append(div['id'])
+            # no need to check subdivs
+            continue
+        
+        elif div['level'] > level:
+            # no need to check at this level
+            return ids
+
+        if div['subdivs']:
+            subids = get_div_ids_upto_level(div['subdivs'], level)
+            ids.extend(subids)
+            
+    return ids
+
+
+def write_nav_doc_level(divs, level, args):
+    """
+    Write DTS navigation structure JSON file for full document at level.
+    """
+    members = get_div_ids_by_level(divs, level)
+    if not members:
+        return 
+    
+    if level > 1:
+        level_param = '&level=' + str(level)
+        parent = {
+            '@type': 'Resource', 
+            '@dts:ref': f"{args.url_prefix}{args.nav_prefix}?id={args.docid}"
+        }
+
+    else:
+        level_param = ''
+        parent = None
+        
     nav_struct = {
         '@context': {
             '@vocab': 'https://www.w3.org/ns/hydra/core#',
             'dts': 'https://w3id.org/dts/api#'
         },
-        '@id': f"{args.url_prefix}/navigation/?id={args.docid}&level={level}",
+        '@id': f"{args.url_prefix}{args.nav_prefix}?id={args.docid}{level_param}",
         'dts:citeDepth': args.cite_depth,
         'dts:level': level,
-        'member': [{'dts:ref': ref} for ref in get_div_ids(infos, level)],
-        'dts:passage': f"{args.url_prefix}/documents/?id={args.docid}{{&ref}}",
-        'dts:parent': None
+        'member': [{'dts:ref': div_id} for div_id in members],
+        'dts:passage': f"{args.url_prefix}{args.doc_prefix}?id={args.docid}{{&ref}}",
+        'dts:parent': parent
     }
-    write_json_document(nav_struct, level, args)
+    write_json_document(nav_struct, None, level, args)
+    # write level 1 also as toplevel
+    if level == 1:
+        write_json_document(nav_struct, None, 0, args)
 
 
-def write_nav_ref(infos, ref, level, args):
+def write_nav_ref_level(divs, ref, level, args):
     """
-    Write DTS navigation structure JSON file for ref.
+    Write DTS navigation structure JSON file for fragment ref at level.
     """
+    div, parent_id = get_div_by_ref(divs, ref)
+    if div is None:
+        raise RuntimeError(f"div for ref={ref} not found!")
+
+    
+    reflevel = div['level']
+    if level == reflevel:
+        # no members at same level
+        return
+    
+    members = get_div_ids_by_level(div, level)
+    if not members:
+        return 
+
+    # create parent nav link
+    if reflevel == 1:
+        parent = {
+            '@type': 'Resource', 
+            '@dts:ref': f"{args.url_prefix}{args.nav_prefix}?id={args.docid}"
+        }
+    elif reflevel > 1:
+        parent = {
+            '@type': 'CitableUnit', 
+            '@dts:ref': parent_id
+        }
+    else:
+        parent = None
+    
     nav_struct = {
         '@context': {
             '@vocab': 'https://www.w3.org/ns/hydra/core#',
             'dts': 'https://w3id.org/dts/api#'
         },
-        '@id': f"{args.url_prefix}/navigation/?id={args.docid}&ref={ref}&level={level}",
+        '@id': f"{args.url_prefix}{args.nav_prefix}?id={args.docid}&ref={ref}",
         'dts:citeDepth': args.cite_depth,
         'dts:level': level,
-        'member': [{'dts:ref': ref} for ref in get_div_ids(infos, level)],
-        'dts:passage': f"{args.url_prefix}/documents/?id={args.docid}{{&ref}}",
-        'dts:parent': None
+        'member': [{'dts:ref': div_id} for div_id in members],
+        'dts:passage': f"{args.url_prefix}{args.doc_prefix}?id={args.docid}{{&ref}}",
+        'dts:parent': parent
     }
-    write_json_document(nav_struct, level, args)
+    write_json_document(nav_struct, ref, level, args)
+    # write default level also as toplevel
+    if level == reflevel + 1:
+        write_json_document(nav_struct, ref, 0, args)
 
 
-def write_navigation(infos, args):
+def write_navigation(divs, args):
     """
     Write DTS navigation structure JSON files.
     """
-    args.cite_depth = get_div_maxlevel(infos, 0)
-    # write navigation for levels
+    args.cite_depth = get_maxlevel(divs, 0)
     for level in range(1, args.cite_depth+1):
-        write_nav_level(infos, level, args)
-   
-    # write navigation for refs
+        # write navigation for levels
+        write_nav_doc_level(divs, level, args)
+       
+        # write navigation for refs
+        for ref in get_div_ids_upto_level(divs, level):
+            write_nav_ref_level(divs, ref, level, args)
+        
     
     
 ##
@@ -250,8 +367,8 @@ def write_navigation(infos, args):
 ##
 def main():
     argp = argparse.ArgumentParser(description='Create DTSflat file structure from TEI XML.')
-    argp.add_argument('--version', action='version', version='%(prog)s 0.1')
-    argp.add_argument('-l', '--log', dest='loglevel', choices=['INFO', 'DEBUG', 'ERROR'], default='DEBUG', 
+    argp.add_argument('--version', action='version', version='%(prog)s 1.0')
+    argp.add_argument('-l', '--log', dest='loglevel', choices=['INFO', 'DEBUG', 'ERROR'], default='INFO', 
                       help='Log level.')
     argp.add_argument('inputfile',
                       help='TEI XML input file.')
@@ -262,7 +379,14 @@ def main():
     argp.add_argument('--gen-id-prefix', dest='genid_prefix', default='genid',
                       help='Prefix for generated xml-ids.')
     argp.add_argument('-u', '--url-prefix', dest='url_prefix', default='/dts',
-                      help='DTS API URL prefix.')
+                      help='DTS API base URL prefix.')
+    argp.add_argument('--document-prefix', dest='doc_prefix', default='/documents',
+                      help='DTS document endpoint URL prefix (below base URL).')
+    argp.add_argument('--navigation-prefix', dest='nav_prefix', default='/navigation',
+                      help='DTS navigation endpoint URL prefix (below base URL).')
+    argp.add_argument('-m', '--navigation-mode', dest='nav_mode', 
+                      choices=['div'], default='div',
+                      help='Type of navigation structure: div=by tei:div.')
  
     args = argp.parse_args()
     
@@ -277,11 +401,10 @@ def main():
 
     # load and process inputfile into document endpoint structure
     doc = load_xml_file(args)
-    logging.info("Parsing TEI document and creating document endpoint structure...")
+    logging.info(f"Parsing TEI document and creating document endpoint structure in {args.basedir}")
     info = parse_tei_doc(doc, args)
-    #logging.debug(f"infos={info}")
     # write navigation endpoint structure
-    logging.info("Creating navigation endpoint structure...")
+    logging.info(f"Creating navigation endpoint structure in {args.basedir}")
     write_navigation(info, args)
 
 
