@@ -2,6 +2,9 @@
 
 Simple tool to create flat DTS file structure from a simple TEI file.
 
+Requirements
+- Python3 (>3.6)
+
 ```
 usage: tei2dtsflat.py [-h] [--version] [-l {INFO,DEBUG,ERROR}] [-b BASEDIR] [-i DOCID]
                       [--gen-id-prefix GENID_PREFIX] [-u URL_PREFIX] [--document-prefix DOC_PREFIX]
