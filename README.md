@@ -1,6 +1,8 @@
 # simple-tei2dtsflat
 
-Simple tool to create flat DTS file structure from a simple TEI file.
+Simple Python tool to create a DTSflat file structure from a (simple) TEI XML file.
+
+The generated DTSflat files can be used to serve a [DTS API](https://distributed-text-services.github.io/specifications/) using the minimal computing https://github.com/robcast/dtsflat-server
 
 Requirements
 - Python3 (>3.6)
