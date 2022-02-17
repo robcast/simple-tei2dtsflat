@@ -1,4 +1,4 @@
-# simple-tei2dtsflat
+# Simple tei2dtsflat
 
 Simple Python tool to create a DTSflat file structure from a (simple) TEI XML file.
 
