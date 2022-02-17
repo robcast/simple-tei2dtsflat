@@ -4,8 +4,8 @@ import argparse
 import logging
 import time
 import xml.etree.ElementTree as ET
+import xml.sax
 from pathlib import Path
-import xml
 import json
 
 XMLNS = {'': 'http://www.tei-c.org/ns/1.0',
@@ -15,8 +15,14 @@ XMLNS = {'': 'http://www.tei-c.org/ns/1.0',
 for n in XMLNS:
     ET.register_namespace(n, XMLNS[n])
 
-def ns_name(ns, name):
-    return f"{{{XMLNS[ns]}}}{name}"
+def ns_name(ns, lname):
+    return f"{{{XMLNS[ns]}}}{lname}"
+
+def q_name(ns, lname):
+    if ns is None or ns == XMLNS['']:
+        return lname
+    else:
+        return f"{{{ns}}}{lname}"
 
 
 def write_xml_document(doc, args):
@@ -44,7 +50,7 @@ def write_xml_fragment(doc, frag_id, args):
     outfile = Path(dir, 'tei-frag.xml')
     logging.debug(f"writing XML fragment {outfile}")
     with outfile.open(mode='wb') as f:
-        # root element TEI
+        # root fragment_root TEI
         tei = ET.Element('TEI')
         # dts:fragment wrapper around fragment doc
         frag = ET.SubElement(tei, ns_name('dts', 'fragment'))
@@ -83,10 +89,8 @@ def load_xml_file(args):
     
     Returns etree root Element.
     """
-    infilename = args.inputfile
-    logging.info(f"Loading XML file {infilename}")
-    next_time = time.time()
-    tree = ET.parse(infilename)
+    logging.info(f"Loading XML file {args.inputfile}")
+    tree = ET.parse(args.inputfile)
     return tree.getroot()
 
 
@@ -144,32 +148,128 @@ def parse_tei_doc(doc, args):
     Returns list of info structures from divs.
     """
     if doc.tag != ns_name('', 'TEI'):
-        raise RuntimeError("Not a valid TEI document: root element is not 'TEI'")
+        raise RuntimeError("Not a valid TEI document: root fragment_root is not 'TEI'")
     
     text = doc.find('text', XMLNS)
     if not text:
-        raise RuntimeError("Not a valid TEI document: missing 'text' element")
+        raise RuntimeError("Not a valid TEI document: missing 'text' fragment_root")
     
     # write full document to basedir
     write_xml_document(doc, args)
     
     infos = []
-    front = text.find('front', XMLNS)
-    if front:
-        for div in front.findall('div', XMLNS):
-            infos.append(parse_tei_div(div, 1, args))
-
-    body = text.find('body', XMLNS)
-    if body:
-        for div in body.findall('div', XMLNS):
-            infos.append(parse_tei_div(div, 1, args))
-
-    back = text.find('back', XMLNS)
-    if back:
-        for div in back.findall('div', XMLNS):
-            infos.append(parse_tei_div(div, 1, args))
-
+    if args.nav_mode == 'div':
+        front = text.find('front', XMLNS)
+        if front:
+            for div in front.findall('div', XMLNS):
+                infos.append(parse_tei_div(div, 1, args))
+    
+        body = text.find('body', XMLNS)
+        if body:
+            for div in body.findall('div', XMLNS):
+                infos.append(parse_tei_div(div, 1, args))
+    
+        back = text.find('back', XMLNS)
+        if back:
+            for div in back.findall('div', XMLNS):
+                infos.append(parse_tei_div(div, 1, args))
+        
+    elif args.nav_mode == 'pb':
+        infos.append(parse_tei_pbs(args))
+        
+    else:
+        raise RuntimeError(f"Invalid navigation mode {args.nav_mode}")
+    
     return infos
+
+
+def parse_tei_pbs(args):
+    """
+    Parse TEI document in args.inputfile for pb elements.
+    
+    Writes XML fragments between pb elements.
+    Returns list of info structures from pbs. 
+    """
+    
+    class TeiPbHandler(xml.sax.handler.ContentHandler):
+    
+        def __init__(self, args):
+            self.args = args
+            self.pbs = []
+            self.fragment_root = ET.Element('TEI')
+            self.current_element = self.fragment_root
+            self.current_parent = None
+            self.pb_cnt = 0
+            self.params = {}
+    
+        def create_etree_elem(self, sax_name, sax_attrs):
+            ns, lname = sax_name
+            attrs = {q_name(k[0], k[1]): sax_attrs[k] for k in sax_attrs}
+            elem = ET.Element(q_name(sax_name[0], sax_name[1]), attrib=attrs)
+            return elem
+    
+        def start_etree_fragment(self, elem):
+            self.fragment_root = ET.Element('TEI')
+            self.fragment_root.append(elem)
+            self.current_element = elem
+            self.current_parent = self.fragment_root
+    
+        def write_etree_fragment(self, pb):
+            write_xml_fragment(self.fragment_root, pb['id'], self.args)
+    
+        def startElementNS(self, name, qname, attrs):
+            ns, lname = name
+            elem = self.create_etree_elem(name, dict(attrs))
+            if lname == 'pb':
+                # write previous fragment
+                if len(self.pbs) > 0:
+                    self.write_etree_fragment(self.pbs[-1])
+                    
+                # start new fragment
+                self.pb_cnt += 1
+                pb_id = f"pb-{self.pb_cnt}"
+                self.start_etree_fragment(elem)
+                facs = attrs.getValueByQName('facs')
+                if facs is None:
+                    logging.warning("pb tag without facs attribute")
+                    
+                self.pbs.append({'id': pb_id, 'facs': facs, 'attrs': dict(attrs)})
+                
+            else:
+                # append current element to fragment
+                self.current_parent = self.current_element
+                self.current_parent.append(elem)
+                self.current_element = elem
+    
+        def characters(self, content):
+            if self.current_element.text is None:
+                self.current_element.text = content.strip()
+            else:
+                self.current_element.text += content.strip()
+    
+        def endElementNS(self, name, qname):
+            # close current element
+            self.current_element = self.current_parent
+            if self.current_element is None:
+                logging.warning(f"empty stack after closing element {name}")
+                
+        def endDocument(self):
+            # save last fragment
+            pass
+    
+        def getParams(self):
+            return self.params
+        
+    # create SAX parser
+    parser = xml.sax.make_parser()
+    parser.setFeature(xml.sax.handler.feature_namespaces, True)
+    # set our handler
+    handler = TeiPbHandler(args)
+    parser.setContentHandler(handler)
+    # parse XML file
+    parser.parse(args.inputfile)
+    # get output from handler
+    params = handler.getParams()
 
 
 def get_maxlevel(divs, maxlevel):
@@ -385,7 +485,7 @@ def main():
     argp.add_argument('--navigation-prefix', dest='nav_prefix', default='/navigation',
                       help='DTS navigation endpoint URL prefix (below base URL).')
     argp.add_argument('-m', '--navigation-mode', dest='nav_mode', 
-                      choices=['div'], default='div',
+                      choices=['div', 'pb'], default='div',
                       help='Type of navigation structure: div=by tei:div.')
  
     args = argp.parse_args()
