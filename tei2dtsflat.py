@@ -15,11 +15,27 @@ XMLNS = {'': 'http://www.tei-c.org/ns/1.0',
 for n in XMLNS:
     ET.register_namespace(n, XMLNS[n])
 
-def ns_name(ns, lname):
-    return f"{{{XMLNS[ns]}}}{lname}"
+def add_set_attr(obj, attr, val):
+    curval = getattr(obj, attr)
+    if curval is None:
+        setattr(obj, attr, val)
+    else:
+        setattr(obj, attr, curval + val)
 
-def q_name(ns, lname):
+    
+def ns_pref_name(prefix, lname):
+    """
+    Return etree format name from prefix and local name.
+    """
+    return f"{{{XMLNS[prefix]}}}{lname}"
+
+
+def ns_uri_name(ns, lname):
+    """
+    Returns etree format name from namespace uri and local name.
+    """
     if ns is None or ns == XMLNS['']:
+        # no ns or default ns
         return lname
     else:
         return f"{{{ns}}}{lname}"
@@ -39,7 +55,7 @@ def write_xml_document(doc, args):
         tree.write(f, encoding='utf-8', xml_declaration=True)        
 
 
-def write_xml_fragment(doc, frag_id, args):
+def write_xml_fragment(doc, frag_id, args, wrap_dts_frag=True):
     """
     Write fragment doc as XML file in structured directories starting at basedir.
     
@@ -50,13 +66,17 @@ def write_xml_fragment(doc, frag_id, args):
     outfile = Path(dir, 'tei-frag.xml')
     logging.debug(f"writing XML fragment {outfile}")
     with outfile.open(mode='wb') as f:
-        # root fragment_root TEI
-        tei = ET.Element('TEI')
-        # dts:fragment wrapper around fragment doc
-        frag = ET.SubElement(tei, ns_name('dts', 'fragment'))
-        frag.append(doc)
+        if wrap_dts_frag:
+            # root fragment_root TEI
+            tei = ET.Element('TEI')
+            # dts:fragment wrapper around fragment doc
+            frag = ET.SubElement(tei, ns_pref_name('dts', 'fragment'))
+            frag.append(doc)
+            doc = tei
+            
         # write as new ElementTree
-        tree = ET.ElementTree(tei)
+        tree = ET.ElementTree(doc)
+            
         tree.write(f, encoding='utf-8', xml_declaration=True)
         
 
@@ -101,12 +121,12 @@ def parse_tei_div(doc, level, args):
     Writes div fragment files.
     Returns info dict. 
     """
-    div_id = doc.get(ns_name('xml', 'id'))
+    div_id = doc.get(ns_pref_name('xml', 'id'))
     if div_id is None:
         # create and set new id
         div_id = f"{args.genid_prefix}-div{args.genid_cnt}"
         args.genid_cnt += 1
-        doc.set(ns_name('xml', 'id'), div_id)
+        doc.set(ns_pref_name('xml', 'id'), div_id)
         
     div_type = doc.get('type')
     
@@ -147,7 +167,7 @@ def parse_tei_doc(doc, args):
     
     Returns list of info structures from divs.
     """
-    if doc.tag != ns_name('', 'TEI'):
+    if doc.tag != ns_pref_name('', 'TEI'):
         raise RuntimeError("Not a valid TEI document: root fragment_root is not 'TEI'")
     
     text = doc.find('text', XMLNS)
@@ -175,12 +195,13 @@ def parse_tei_doc(doc, args):
                 infos.append(parse_tei_div(div, 1, args))
         
     elif args.nav_mode == 'pb':
-        infos.append(parse_tei_pbs(args))
+        infos = parse_tei_pbs(args)
         
     else:
         raise RuntimeError(f"Invalid navigation mode {args.nav_mode}")
     
     return infos
+
 
 
 def parse_tei_pbs(args):
@@ -191,85 +212,153 @@ def parse_tei_pbs(args):
     Returns list of info structures from pbs. 
     """
     
-    class TeiPbHandler(xml.sax.handler.ContentHandler):
+    class TeiPbProcessor(xml.sax.handler.ContentHandler):
     
         def __init__(self, args):
             self.args = args
             self.pbs = []
-            self.fragment_root = ET.Element('TEI')
-            self.current_element = self.fragment_root
-            self.current_parent = None
+            self.current_content = ''
+            self.current_element = None
+            self.current_parents = []
+            self.open_tags = []
+            self.prev_event_close = False
+            self.prev_element = None
             self.pb_cnt = 0
-            self.params = {}
-    
-        def create_etree_elem(self, sax_name, sax_attrs):
+
+
+        def create_etree_attrs(self, sax_attrs):
+            """Create etree attribute dict from sax attribute object."""
+            _sax_attrs = dict(sax_attrs)
+            return {ns_uri_name(k[0], k[1]): _sax_attrs[k] for k in _sax_attrs}
+
+
+        def create_etree_elem(self, sax_name, attrs):
+            """Create etree Element from sax_name and etree attrs."""
             ns, lname = sax_name
-            attrs = {q_name(k[0], k[1]): sax_attrs[k] for k in sax_attrs}
-            elem = ET.Element(q_name(sax_name[0], sax_name[1]), attrib=attrs)
+            elem = ET.Element(ns_uri_name(sax_name[0], sax_name[1]), attrib=attrs)
             return elem
+
     
-        def start_etree_fragment(self, elem):
-            self.fragment_root = ET.Element('TEI')
-            self.fragment_root.append(elem)
-            self.current_element = elem
-            self.current_parent = self.fragment_root
+        def start_etree_fragment(self):
+            """
+            Create new etree fragment as current fragment.
+            
+            Includes empty tag hierarchy from open_tags and dts:fragment.
+            """ 
+            self.current_element = None
+            self.current_parents = []
+            # create empty tags from open_tags
+            for t in self.open_tags:
+                elem = ET.Element(ns_uri_name(t['ns'], t['lname']), attrib=t['attrs'])
+                if self.current_element is not None:
+                    # append elem to current element
+                    self.current_element.append(elem)
+                
+                # push current to parent list
+                self.current_parents.append(self.current_element)
+                self.current_element = elem
+
+            # add dts:fragment wrapper
+            frag = ET.Element(ns_pref_name('dts', 'fragment'))
+            self.current_element.append(frag)
+            self.current_parents.append(self.current_element)
+            self.current_element = frag
+
     
-        def write_etree_fragment(self, pb):
-            write_xml_fragment(self.fragment_root, pb['id'], self.args)
+        def write_etree_fragment(self, frag_id):
+            """Write current fragment as frag_id."""
+            write_xml_fragment(self.current_parents[1], frag_id, self.args, wrap_dts_frag=False)
+
     
-        def startElementNS(self, name, qname, attrs):
+        def startElementNS(self, name, qname, sax_attrs):
+            # save remaining content
+            if len(self.current_content) > 0:
+                if self.prev_event_close:
+                    # start after previous end
+                    add_set_attr(self.prev_element, 'tail', self.current_content)
+                else:
+                    # start after previous start
+                    add_set_attr(self.current_element, 'text', self.current_content)
+                    
+                self.current_content = ''
+                
             ns, lname = name
-            elem = self.create_etree_elem(name, dict(attrs))
+            attrs = self.create_etree_attrs(sax_attrs)
+            elem = self.create_etree_elem(name, attrs)
             if lname == 'pb':
                 # write previous fragment
                 if len(self.pbs) > 0:
-                    self.write_etree_fragment(self.pbs[-1])
+                    self.write_etree_fragment(self.pbs[-1]['id'])
                     
                 # start new fragment
                 self.pb_cnt += 1
                 pb_id = f"pb-{self.pb_cnt}"
-                self.start_etree_fragment(elem)
-                facs = attrs.getValueByQName('facs')
+                self.start_etree_fragment()
+                facs = sax_attrs.getValueByQName('facs')
                 if facs is None:
                     logging.warning("pb tag without facs attribute")
                     
-                self.pbs.append({'id': pb_id, 'facs': facs, 'attrs': dict(attrs)})
+                self.pbs.append({'id': pb_id, 'level': 1, 'facs': facs, 'attrs': attrs})
                 
-            else:
-                # append current element to fragment
-                self.current_parent = self.current_element
-                self.current_parent.append(elem)
-                self.current_element = elem
+            # append new elem to current fragment
+            if self.current_element is not None:
+                # append to parent element
+                self.current_element.append(elem)
+                
+            # push current to parent list
+            self.current_parents.append(self.current_element)
+            # set new elem as current
+            self.current_element = elem
+            self.open_tags.append({'ns':ns, 'lname': lname, 'attrs': attrs})
+            self.prev_event_close = False
+
     
         def characters(self, content):
-            if self.current_element.text is None:
-                self.current_element.text = content.strip()
-            else:
-                self.current_element.text += content.strip()
+            self.current_content += content
+
     
         def endElementNS(self, name, qname):
+            # set current content as element text or previous element tail
+            if len(self.current_content) > 0:
+                if self.prev_event_close:
+                    # start after previous end
+                    add_set_attr(self.prev_element, 'tail', self.current_content)
+                else:
+                    # start after previous start
+                    add_set_attr(self.current_element, 'text', self.current_content)
+                    
+                self.current_content = ''
+
+            self.prev_element = self.current_element
             # close current element
-            self.current_element = self.current_parent
+            self.open_tags.pop()
+            self.current_element = self.current_parents.pop()
             if self.current_element is None:
                 logging.warning(f"empty stack after closing element {name}")
+
+            self.prev_event_close = True
+
                 
         def endDocument(self):
-            # save last fragment
+            # TODO: save last fragment
             pass
+
     
-        def getParams(self):
-            return self.params
+        def get_pb_info(self):
+            return self.pbs
+
         
     # create SAX parser
     parser = xml.sax.make_parser()
     parser.setFeature(xml.sax.handler.feature_namespaces, True)
     # set our handler
-    handler = TeiPbHandler(args)
+    handler = TeiPbProcessor(args)
     parser.setContentHandler(handler)
     # parse XML file
     parser.parse(args.inputfile)
-    # get output from handler
-    params = handler.getParams()
+    # return output from handler
+    info = handler.get_pb_info()
+    return info
 
 
 def get_maxlevel(divs, maxlevel):
@@ -280,7 +369,7 @@ def get_maxlevel(divs, maxlevel):
         if info['level'] > maxlevel:
             maxlevel = info['level']
             
-        if info['subdivs']:
+        if info.get('subdivs', None):
             maxlevel = get_maxlevel(info['subdivs'], maxlevel)
             
     return maxlevel
@@ -297,7 +386,7 @@ def get_div_by_ref(divs, ref):
             refdiv = div
             break
 
-        if div['subdivs']:
+        if div.get('subdivs', None):
             subdiv, _ = get_div_by_ref(div['subdivs'], ref)
             if subdiv:
                 refdiv = subdiv
@@ -325,7 +414,7 @@ def get_div_ids_by_level(divs, level):
             # no need to check at this level
             return ids
             
-        if div['subdivs']:
+        if div.get('subdivs', None):
             subids = get_div_ids_by_level(div['subdivs'], level)
             ids.extend(subids)
             
@@ -353,7 +442,7 @@ def get_div_ids_upto_level(divs, level):
             # no need to check at this level
             return ids
 
-        if div['subdivs']:
+        if div.get('subdivs', None):
             subids = get_div_ids_upto_level(div['subdivs'], level)
             ids.extend(subids)
             
@@ -467,7 +556,7 @@ def write_navigation(divs, args):
 ##
 def main():
     argp = argparse.ArgumentParser(description='Create DTSflat file structure from TEI XML.')
-    argp.add_argument('--version', action='version', version='%(prog)s 1.0')
+    argp.add_argument('--version', action='version', version='%(prog)s 1.1')
     argp.add_argument('-l', '--log', dest='loglevel', choices=['INFO', 'DEBUG', 'ERROR'], default='INFO', 
                       help='Log level.')
     argp.add_argument('inputfile',
