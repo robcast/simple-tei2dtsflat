@@ -1,16 +1,27 @@
-# simple-tei2dtsflat
+# Simple tei2dtsflat
 
 Simple Python tool to create a DTSflat file structure from a (simple) TEI XML file.
 
 The generated DTSflat files can be used to serve a [DTS API](https://distributed-text-services.github.io/specifications/) using the minimal computing https://github.com/robcast/dtsflat-server
 
-Requirements
+## Software requirements
+
 - Python3 (>3.6)
+
+## TEI requirements
+
+- navigation-mode=div 
+  - navigation endpoint uses a hierarchical navigation structure from all `tei:div` elements
+  - document endpoint uses the `xml:id` as reference to retrieve the div content
+- navigation-mode=pb
+  - navigation endpoint uses a flat navigation structure from all `tei:pb` elements
+  - document endpoint uses generated `xml:id` as reference to retrieve all content between the pb element and the next
+  - page fragments contain matching `tei:facsimile` elements if `tei:pb@facs` is a reference
 
 ```
 usage: tei2dtsflat.py [-h] [--version] [-l {INFO,DEBUG,ERROR}] [-b BASEDIR] [-i DOCID]
                       [--gen-id-prefix GENID_PREFIX] [-u URL_PREFIX] [--document-prefix DOC_PREFIX]
-                      [--navigation-prefix NAV_PREFIX] [-m {div}]
+                      [--navigation-prefix NAV_PREFIX] [-m {div,pb}]
                       inputfile
 
 Create DTSflat file structure from TEI XML.
@@ -35,6 +46,6 @@ optional arguments:
                         DTS document endpoint URL prefix (below base URL).
   --navigation-prefix NAV_PREFIX
                         DTS navigation endpoint URL prefix (below base URL).
-  -m {div}, --navigation-mode {div}
-                        Type of navigation structure: div=by tei:div.
+  -m {div,pb}, --navigation-mode {div,pb}
+                        Type of navigation structure: div=tei:div, pb=tei:pb.
 ```

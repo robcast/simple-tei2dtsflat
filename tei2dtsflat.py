@@ -596,7 +596,7 @@ def main():
                       help='DTS navigation endpoint URL prefix (below base URL).')
     argp.add_argument('-m', '--navigation-mode', dest='nav_mode', 
                       choices=['div', 'pb'], default='div',
-                      help='Type of navigation structure: div=by tei:div.')
+                      help='Type of navigation structure: div=tei:div, pb=tei:pb.')
  
     args = argp.parse_args()
     
