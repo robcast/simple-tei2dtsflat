@@ -124,8 +124,8 @@ def parse_tei_div(doc, level, args):
     div_id = doc.get(ns_pref_name('xml', 'id'))
     if div_id is None:
         # create and set new id
-        div_id = f"{args.genid_prefix}-div{args.genid_cnt}"
         args.genid_cnt += 1
+        div_id = f"{args.genid_prefix}div{args.genid_cnt}"
         doc.set(ns_pref_name('xml', 'id'), div_id)
         
     div_type = doc.get('type')
@@ -302,9 +302,12 @@ def parse_tei_pbs(doc, args):
                     self.write_etree_fragment(self.pbs[-1]['id'])
                     
                 # start new fragment
-                self.pb_cnt += 1
-                pb_id = f"pb-{self.pb_cnt}"
-                facs = sax_attrs.getValueByQName('facs')
+                pb_id = attrs.get(ns_pref_name('xml', 'id'), None)
+                if not pb_id:
+                    self.pb_cnt += 1
+                    pb_id = f"{self.args.genid_prefix}pb{self.pb_cnt}"
+                    
+                facs = attrs.get('facs', None)
                 facs_id = None
                 if not facs:
                     logging.warning("pb tag without facs attribute")
@@ -344,6 +347,10 @@ def parse_tei_pbs(doc, args):
                     
                 self.current_content = ''
 
+            if len(self.current_parents) <= 1:
+                # write fragment before closing outermost tag
+                self.write_etree_fragment(self.pbs[-1]['id'])
+
             self.prev_element = self.current_element
             # close current element
             self.open_tags.pop()
@@ -353,12 +360,7 @@ def parse_tei_pbs(doc, args):
 
             self.prev_event_close = True
 
-                
-        def endDocument(self):
-            # TODO: save last fragment
-            pass
 
-    
         def get_pb_info(self):
             return self.pbs
 
@@ -586,7 +588,7 @@ def main():
                       help='DTSflat output base directory.')
     argp.add_argument('-i', '--document-id', dest='docid', 
                       help='DTS main document id (default: inputfile).')
-    argp.add_argument('--gen-id-prefix', dest='genid_prefix', default='genid',
+    argp.add_argument('--gen-id-prefix', dest='genid_prefix', default='genid-',
                       help='Prefix for generated xml-ids.')
     argp.add_argument('-u', '--url-prefix', dest='url_prefix', default='/dts',
                       help='DTS API base URL prefix.')
@@ -607,7 +609,7 @@ def main():
         args.docid = docid
         
     # global counter for generated ids
-    args.genid_cnt = 1
+    args.genid_cnt = 0
 
     # load and process inputfile into document endpoint structure
     doc = load_xml_file(args)

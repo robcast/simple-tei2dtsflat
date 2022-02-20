@@ -12,11 +12,13 @@ The generated DTSflat files can be used to serve a [DTS API](https://distributed
 
 - navigation-mode=div 
   - navigation endpoint uses a hierarchical navigation structure from all `tei:div` elements
-  - document endpoint uses the `xml:id` as reference to retrieve the div content
+  - document endpoint uses the `xml:id` (generated as necessary) as reference to retrieve the div content
 - navigation-mode=pb
   - navigation endpoint uses a flat navigation structure from all `tei:pb` elements
-  - document endpoint uses generated `xml:id` as reference to retrieve all content between the pb element and the next
+  - document endpoint uses `xml:id` (generated as necessary) as reference to retrieve all content between the pb element and the next
   - page fragments contain matching `tei:facsimile` elements if `tei:pb@facs` is a reference
+
+## Running
 
 ```
 usage: tei2dtsflat.py [-h] [--version] [-l {INFO,DEBUG,ERROR}] [-b BASEDIR] [-i DOCID]
