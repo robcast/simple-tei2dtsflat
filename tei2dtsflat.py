@@ -195,7 +195,7 @@ def parse_tei_doc(doc, args):
                 infos.append(parse_tei_div(div, 1, args))
         
     elif args.nav_mode == 'pb':
-        infos = parse_tei_pbs(args)
+        infos = parse_tei_pbs(doc, args)
         
     else:
         raise RuntimeError(f"Invalid navigation mode {args.nav_mode}")
@@ -204,7 +204,7 @@ def parse_tei_doc(doc, args):
 
 
 
-def parse_tei_pbs(args):
+def parse_tei_pbs(doc, args):
     """
     Parse TEI document in args.inputfile for pb elements.
     
@@ -213,9 +213,11 @@ def parse_tei_pbs(args):
     """
     
     class TeiPbProcessor(xml.sax.handler.ContentHandler):
+        """SAX parser for processing tei:pb elements"""
     
-        def __init__(self, args):
+        def __init__(self, facs_dict={}, args=None):
             self.args = args
+            self.facs_dict = facs_dict
             self.pbs = []
             self.current_content = ''
             self.current_element = None
@@ -239,21 +241,30 @@ def parse_tei_pbs(args):
             return elem
 
     
-        def start_etree_fragment(self):
+        def start_etree_fragment(self, facs_id=None):
             """
             Create new etree fragment as current fragment.
             
+            Includes facsimile fragment for facs_id.
             Includes empty tag hierarchy from open_tags and dts:fragment.
             """ 
-            self.current_element = None
+            root_elem = ET.Element('TEI')
+            self.current_element = root_elem
             self.current_parents = []
+            if facs_id in self.facs_dict:
+                # add facsimile with matching element
+                fm_elem = ET.Element('facsimile')
+                fm_elem.append(self.facs_dict[facs_id])
+                root_elem.append(fm_elem)
+                
             # create empty tags from open_tags
             for t in self.open_tags:
-                elem = ET.Element(ns_uri_name(t['ns'], t['lname']), attrib=t['attrs'])
-                if self.current_element is not None:
-                    # append elem to current element
-                    self.current_element.append(elem)
+                if t['lname'] == 'TEI':
+                    continue
                 
+                elem = ET.Element(ns_uri_name(t['ns'], t['lname']), attrib=t['attrs'])
+                # append elem to current element
+                self.current_element.append(elem)
                 # push current to parent list
                 self.current_parents.append(self.current_element)
                 self.current_element = elem
@@ -267,7 +278,7 @@ def parse_tei_pbs(args):
     
         def write_etree_fragment(self, frag_id):
             """Write current fragment as frag_id."""
-            write_xml_fragment(self.current_parents[1], frag_id, self.args, wrap_dts_frag=False)
+            write_xml_fragment(self.current_parents[0], frag_id, self.args, wrap_dts_frag=False)
 
     
         def startElementNS(self, name, qname, sax_attrs):
@@ -293,11 +304,15 @@ def parse_tei_pbs(args):
                 # start new fragment
                 self.pb_cnt += 1
                 pb_id = f"pb-{self.pb_cnt}"
-                self.start_etree_fragment()
                 facs = sax_attrs.getValueByQName('facs')
-                if facs is None:
+                facs_id = None
+                if not facs:
                     logging.warning("pb tag without facs attribute")
-                    
+                elif facs.startswith('#'):
+                    # facs is reference to surface
+                    facs_id = facs[1:]
+
+                self.start_etree_fragment(facs_id=facs_id)
                 self.pbs.append({'id': pb_id, 'level': 1, 'facs': facs, 'attrs': attrs})
                 
             # append new elem to current fragment
@@ -347,12 +362,18 @@ def parse_tei_pbs(args):
         def get_pb_info(self):
             return self.pbs
 
-        
+    # read facs_dict element
+    facs_dict = {}
+    for elem in doc.find('facsimile', XMLNS):
+        elem_id = elem.get(ns_pref_name('xml', 'id'))
+        if elem_id:
+            facs_dict[elem_id] = elem
+            
     # create SAX parser
     parser = xml.sax.make_parser()
     parser.setFeature(xml.sax.handler.feature_namespaces, True)
     # set our handler
-    handler = TeiPbProcessor(args)
+    handler = TeiPbProcessor(facs_dict=facs_dict, args=args)
     parser.setContentHandler(handler)
     # parse XML file
     parser.parse(args.inputfile)
@@ -556,7 +577,7 @@ def write_navigation(divs, args):
 ##
 def main():
     argp = argparse.ArgumentParser(description='Create DTSflat file structure from TEI XML.')
-    argp.add_argument('--version', action='version', version='%(prog)s 1.1')
+    argp.add_argument('--version', action='version', version='%(prog)s 1.2')
     argp.add_argument('-l', '--log', dest='loglevel', choices=['INFO', 'DEBUG', 'ERROR'], default='INFO', 
                       help='Log level.')
     argp.add_argument('inputfile',
