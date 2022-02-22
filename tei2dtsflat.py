@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+#
+#    Copyright 2022 Robert Casties
+# 
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+# 
+#        http://www.apache.org/licenses/LICENSE-2.0
+# 
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
 
 import argparse
 import logging
@@ -168,11 +182,11 @@ def parse_tei_doc(doc, args):
     Returns list of info structures from divs.
     """
     if doc.tag != ns_pref_name('', 'TEI'):
-        raise RuntimeError("Not a valid TEI document: root fragment_root is not 'TEI'")
+        raise RuntimeError("Not a valid TEI document: root element is not 'TEI'")
     
     text = doc.find('text', XMLNS)
     if not text:
-        raise RuntimeError("Not a valid TEI document: missing 'text' fragment_root")
+        raise RuntimeError("Not a valid TEI document: missing 'text' element")
     
     # write full document to basedir
     write_xml_document(doc, args)
@@ -208,6 +222,7 @@ def parse_tei_pbs(doc, args):
     """
     Parse TEI document in args.inputfile for pb elements.
     
+    Uses SAX parser to extract content between pb milestones.
     Writes XML fragments between pb elements.
     Returns list of info structures from pbs. 
     """
@@ -312,11 +327,16 @@ def parse_tei_pbs(doc, args):
                 if not facs:
                     logging.warning("pb tag without facs attribute")
                 elif facs.startswith('#'):
-                    # facs is reference to surface
+                    # facs is reference to surface id
                     facs_id = facs[1:]
 
                 self.start_etree_fragment(facs_id=facs_id)
-                self.pbs.append({'id': pb_id, 'level': 1, 'facs': facs, 'attrs': attrs})
+                self.pbs.append({
+                    'id': pb_id, 
+                    'level': 1, 
+                    'facs': facs, 
+                    'attrs': attrs
+                })
                 
             # append new elem to current fragment
             if self.current_element is not None:
@@ -364,13 +384,14 @@ def parse_tei_pbs(doc, args):
         def get_pb_info(self):
             return self.pbs
 
-    # read facs_dict element
+
+    # read tei:facsimile element contents into facs_dict
     facs_dict = {}
     for elem in doc.find('facsimile', XMLNS):
         elem_id = elem.get(ns_pref_name('xml', 'id'))
         if elem_id:
             facs_dict[elem_id] = elem
-            
+    
     # create SAX parser
     parser = xml.sax.make_parser()
     parser.setFeature(xml.sax.handler.feature_namespaces, True)
