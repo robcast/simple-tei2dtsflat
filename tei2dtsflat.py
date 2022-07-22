@@ -386,7 +386,7 @@ def parse_tei_pbs(doc, args):
 
     # read tei:facsimile element contents into facs_dict
     facs_dict = {}
-    for elem in doc.find('facsimile', XMLNS):
+    for elem in (doc.find('facsimile', XMLNS) or []):
         elem_id = elem.get(ns_pref_name('xml', 'id'))
         if elem_id:
             facs_dict[elem_id] = elem
