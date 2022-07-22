@@ -16,7 +16,6 @@
 
 import argparse
 import logging
-import time
 import xml.etree.ElementTree as ET
 import xml.sax
 from pathlib import Path
