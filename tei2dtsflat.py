@@ -16,7 +16,6 @@
 
 import argparse
 import logging
-import time
 import xml.etree.ElementTree as ET
 import xml.sax
 from pathlib import Path
@@ -387,7 +386,7 @@ def parse_tei_pbs(doc, args):
 
     # read tei:facsimile element contents into facs_dict
     facs_dict = {}
-    for elem in doc.find('facsimile', XMLNS):
+    for elem in (doc.find('facsimile', XMLNS) or []):
         elem_id = elem.get(ns_pref_name('xml', 'id'))
         if elem_id:
             facs_dict[elem_id] = elem
@@ -626,7 +625,8 @@ def main():
     # set up 
     logging.basicConfig(level=args.loglevel)
     if args.docid is None:
-        docid = args.inputfile.lower().replace('.tei', '').replace('.xml', '')
+        name = Path(args.inputfile).name if args.inputfile[0] == "/" else args.inputfile
+        docid = name.lower().replace('.tei', '').replace('.xml', '')
         args.docid = docid
         
     # global counter for generated ids
