@@ -1,8 +1,10 @@
 # Simple tei2dtsflat
 
+### !!! This software is currently outdated! Please use software for the current [DTS specification](https://dtsapi.org/specifications/) !!!
+
 Simple Python tool to create a DTSflat file structure from a (simple) TEI XML file.
 
-The generated DTSflat files can be used to serve a [DTS API](https://distributed-text-services.github.io/specifications/) using the minimal computing https://github.com/robcast/dtsflat-server
+The generated DTSflat files can be used to serve a (meanwhile legacy) [draft version of the DTS API](https://dtsapi.org/specifications/versions/1-draft2/) using the minimal computing https://github.com/robcast/dtsflat-server
 
 ## Software requirements
 
